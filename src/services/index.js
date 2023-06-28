@@ -18,6 +18,9 @@ import { selfDayjs, timeZone } from '../utils/set-def-dayjs.js'
 
 axios.defaults.timeout = 10000
 
+// 避免axios请求证书过期，让代码忽略证书检查
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+
 // 使用单空行还是双空行
 const getLB = () => {
   if (!config.USE_PASSAGE || config.USE_PASSAGE === 'wechat-test') {
@@ -446,7 +449,7 @@ export const getCourseSchedule = (courseSchedule) => {
     .set('millisecond', 0), 'millisecond')
   const isSameKind = Math.floor(diff / 7 / 86400000) % 2 === 0
   const kind = ((isSameKind && courseSchedule.benchmark.isOdd) || (!isSameKind && !courseSchedule.benchmark.isOdd)) ? 'odd' : 'even'
-  
+
   const temp = ((courseSchedule.courses && courseSchedule.courses[kind] && courseSchedule.courses[kind][week]) || [])
   const schedule = temp.join(getLB())
   const wechatTestCourseSchedule = []
@@ -454,11 +457,11 @@ export const getCourseSchedule = (courseSchedule) => {
     wechatTestCourseSchedule.push({
       name: toLowerLine(`wxCourseSchedule_${index}`),
       value: item,
-      color: getColor()
+      color: getColor(),
     })
   })
 
-  return {schedule, wechatTestCourseSchedule}
+  return { schedule, wechatTestCourseSchedule }
 }
 
 /**
@@ -515,7 +518,6 @@ export const getBirthdayMessage = (festivals) => {
   })
   let resMessage = ''
   const wechatTestBirthdayMessage = []
-  
 
   birthdayList.forEach((item, index) => {
     if (
@@ -535,16 +537,16 @@ export const getBirthdayMessage = (festivals) => {
         }
 
         if (item.diffDay === 0) {
-          message = `今天是 「${item.name}」 的${age && item.isShowAge ? `${(item.useLunar ? 1 : 0) + age}岁` : ''}${item.useLunar ? '阴历' : '公历'}生日哦，祝${item.name}生日快乐！`
+          message = `今天是 「${item.name}」 的${age && item.isShowAge ? `${(item.useLunar ? 1 : 0) + age}岁` : ''}${item.useLunar ? '阴历' : '公历'}生日哦，祝${item.name}生日快乐！🎂🎂🎂🎉🎉🎉`
         } else {
-          message = `距离 「${item.name}」 的${age && item.isShowAge ? `${age + 1}岁` : ''}${item.useLunar ? '阴历' : '公历'}生日还有${item.diffDay}天`
+          message = `距离 「${item.name}」 的${age && item.isShowAge ? `${age + 1}岁` : ''}${item.useLunar ? '阴历' : '公历'}生日还有${item.diffDay}天🎂`
         }
       }
 
       // 节日相关
       if (item.type === '节日') {
         if (item.diffDay === 0) {
-          message = `今天是 「${item.name}」 哦，要开心！`
+          message = `今天是 「${item.name}」 哦，要开心！🥳`
         } else {
           message = `距离 「${item.name}」 还有${item.diffDay}天`
         }
@@ -556,13 +558,13 @@ export const getBirthdayMessage = (festivals) => {
         wechatTestBirthdayMessage.push({
           name: toLowerLine(`wxBirthday_${index}`),
           value: message,
-          color: getColor()
+          color: getColor(),
         })
       }
     }
   })
 
-  return {resMessage, wechatTestBirthdayMessage}
+  return { resMessage, wechatTestBirthdayMessage }
 }
 
 /**
@@ -693,6 +695,30 @@ export const getTianApiNetworkHot = async (type = 'default') => {
 }
 
 /**
+ * 天行-天气-自定义的请求方式
+ * @param user
+ * @returns {Promise<[]>|Promise<never>|Promise<AxiosResponse<any>>}
+ */
+export const getTianApiWeatherQiao = async (province, city, params = null) => {
+  const cityInfo = getWeatherCityInfo(province, city)
+  if (!cityInfo) {
+    console.error('配置文件中找不到相应的省份或城市')
+    return {}
+  }
+  const url = `http://api.tianapi.com/tianqi/index?key=${config.TIAN_API.key}&city=${cityInfo.city_code}&type=7`
+  const res = await axios.get(url).catch((err) => err)
+
+  if (res && res.data && res.data.code === 200) {
+    const result = (res.data.newslist || []).slice(0, 1)
+
+    RUN_TIME_STORAGE[`tianqi_${JSON.stringify(params)}_${1}`] = cloneDeep(result)
+
+    return result
+  }
+  return []
+}
+
+/**
  * 获取全部处理好的用户数据
  * @returns
  */
@@ -757,7 +783,7 @@ export const getAggregatedData = async () => {
     const constellationFortune = await getConstellationFortune(user.horoscopeDate, user.horoscopeDateType)
 
     // 获取课表信息
-    const {schedule:courseSchedule, wechatTestCourseSchedule} = getCourseSchedule(user.courseSchedule || config.courseSchedule) || DEFAULT_OUTPUT.courseSchedule
+    const { schedule: courseSchedule, wechatTestCourseSchedule } = getCourseSchedule(user.courseSchedule || config.courseSchedule) || DEFAULT_OUTPUT.courseSchedule
 
     // 天行-早晚安
     const tianApiGreeting = [{
@@ -772,6 +798,13 @@ export const getAggregatedData = async () => {
 
     // 天行-天气
     const tianApiWeather = (await getTianApiWeather(user) || []).map((it, index) => Object.keys((it)).filter((weatherKey) => ['province', 'area', 'weatherimg'].indexOf(weatherKey) === -1).map((key) => ({
+      name: toLowerLine(`tianApiWeather_${key}_${index}`),
+      value: it[key],
+      color: getColor(),
+    }))).flat()
+
+    // 天行-天气-自定义获取数据
+    const tianApiWeatherQiao = (await getTianApiWeatherQiao(useProvince, useCity) || []).map((it, index) => Object.keys((it)).filter((weatherKey) => ['province', 'area', 'weatherimg'].indexOf(weatherKey) === -1).map((key) => ({
       name: toLowerLine(`tianApiWeather_${key}_${index}`),
       value: it[key],
       color: getColor(),
@@ -813,6 +846,7 @@ export const getAggregatedData = async () => {
       .concat(slotParams)
       .concat(tianApiGreeting)
       .concat(tianApiWeather)
+      .concat(tianApiWeatherQiao) // 天行天气自定义获取
       .concat(tianApiNetworkHot)
       .concat(wechatTestBirthdayMessage)
       .concat(wechatTestCourseSchedule)
